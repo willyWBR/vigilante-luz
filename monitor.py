@@ -102,6 +102,19 @@ def fmt_duration(minutes: float) -> str:
     return f"{h} h {m} min" if h else f"{m} min"
 
 
+def snapshot(rt: dict) -> str:
+    """Resumen de los datos actuales del inversor para añadir a cada aviso."""
+    bat = float(rt.get("batPower") or 0)
+    flow = "cargando" if bat > 0 else "descargando" if bat < 0 else "en reposo"
+    return (
+        f"\n\n📊 Ahora ({(rt.get('lastUpdateTime') or '')[-8:-3]}):\n"
+        f"☀️ Solar {float(rt.get('pvPower') or 0):.2f} kW\n"
+        f"🏠 Consumo {float(rt.get('loadPower') or 0):.2f} kW\n"
+        f"🔌 Red {abs(float(rt.get('gridPower') or 0)):.2f} kW\n"
+        f"🔋 Batería {rt.get('batSoc')}% · {abs(bat):.2f} kW {flow} · {rt.get('batVoltage')} V"
+    )
+
+
 def parse_local(s: str, tz: ZoneInfo) -> dt.datetime:
     fmt = "%Y-%m-%d %H:%M:%S" if s.count(":") == 2 else "%Y-%m-%d %H:%M"
     return dt.datetime.strptime(s, fmt).replace(tzinfo=tz)
@@ -159,6 +172,7 @@ def check(dry_run: bool) -> int:
 
     on = is_on(pts[-1])
     soc = rt.get("batSoc")
+    snap = snapshot(rt)
     prev = state.get("grid")
     since = transition_time(pts, on)
     print(f"{now:%Y-%m-%d %H:%M} red={'ON' if on else 'OFF'} (desde {since}) "
@@ -169,7 +183,7 @@ def check(dry_run: bool) -> int:
         print("Primera ejecución: guardo el estado sin avisar.")
     elif prev == "on" and not on:
         notify("⚡ Se fue la luz",
-               f"Sin corriente de la calle desde las {since[-5:]}. Batería al {soc}%.",
+               f"Sin corriente de la calle desde las {since[-5:]}.{snap}",
                priority=5, tags=["warning", "electric_plug"], dry_run=dry_run)
     elif prev == "off" and on:
         start = state.get("since")
@@ -177,12 +191,12 @@ def check(dry_run: bool) -> int:
         if start:
             dur = f" Duró {fmt_duration((parse_local(since, tz) - parse_local(start, tz)).total_seconds() / 60)}."
         notify("💡 Volvió la luz",
-               f"Corriente de la calle desde las {since[-5:]}.{dur} Batería al {soc}%.",
+               f"Corriente de la calle desde las {since[-5:]}.{dur}{snap}",
                priority=4, tags=["bulb"], dry_run=dry_run)
 
     if not on and soc is not None and int(soc) <= low_soc and not state.get("low_soc_alert"):
         notify("🔋 Batería baja durante el apagón",
-               f"La batería está al {soc}% y sigue sin luz de la calle.",
+               f"La batería está al {soc}% y sigue sin luz de la calle.{snap}",
                priority=5, tags=["battery"], dry_run=dry_run)
         state["low_soc_alert"] = True
     if on:
@@ -203,7 +217,12 @@ def main() -> int:
     p.add_argument("--dry-run", action="store_true", help="no enviar notificaciones")
     a = p.parse_args()
     if a.test:
-        notify("✅ Prueba del vigilante de luz", "Si ves esto, las notificaciones funcionan.",
+        msg = "Si ves esto, las notificaciones funcionan."
+        try:
+            msg += snapshot(NoorClient(env("NOOR_TOKEN")).realtime_raw(env("NOOR_SN")))
+        except NoorError as e:
+            msg += f"\n(No pude leer los datos actuales: {e})"
+        notify("✅ Prueba del vigilante de luz", msg,
                tags=["white_check_mark"], dry_run=a.dry_run)
         return 0
     return check(a.dry_run)
