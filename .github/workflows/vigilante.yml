@@ -1,0 +1,48 @@
+name: Vigilante de luz
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # GitHub no garantiza la hora exacta; suele haber retraso
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Mandar notificación de prueba"
+        type: boolean
+        default: false
+
+concurrency:
+  group: vigilante
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restaurar estado
+        uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: state-${{ github.run_id }}
+          restore-keys: state-
+
+      - name: Comprobar red eléctrica
+        env:
+          NOOR_TOKEN: ${{ secrets.NOOR_TOKEN }}
+          NOOR_SN: ${{ secrets.NOOR_SN }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          sha_before=$(sha256sum state.json 2>/dev/null || true)
+          if [ "${{ inputs.test }}" = "true" ]; then python3 monitor.py --test; fi
+          python3 monitor.py
+          sha_after=$(sha256sum state.json 2>/dev/null || true)
+          [ "$sha_before" != "$sha_after" ] && echo "CHANGED=1" >> "$GITHUB_ENV" || true
+
+      - name: Guardar estado
+        if: env.CHANGED == '1'
+        uses: actions/cache/save@v4
+        with:
+          path: state.json
+          key: state-${{ github.run_id }}

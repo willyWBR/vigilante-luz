@@ -1,0 +1,9 @@
+# Solo se publica el código del vigilante. Nada de datos personales.
+*
+!.gitignore
+!README.md
+!monitor.py
+!noor_client.py
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml
